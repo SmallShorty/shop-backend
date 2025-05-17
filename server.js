@@ -154,6 +154,119 @@ app.post('/upload', upload.single('image'), (req, res) => {
   });
 });
 
+// ----------------- Маршрут: все категории -----------------
+app.get('/categories', async (req, res) => {
+  try {
+    const { rows } = await client.query('SELECT id, name FROM categories ORDER BY id');
+    res.json(rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Не удалось получить список категорий' });
+  }
+});
+
+// ----------------- Маршрут: все бренды -----------------
+app.get('/brands', async (req, res) => {
+  try {
+    const { rows } = await client.query('SELECT id, name FROM brands ORDER BY id');
+    res.json(rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Не удалось получить список брендов' });
+  }
+});
+
+// ----------------- Маршрут: все типы -----------------
+app.get('/types', async (req, res) => {
+  try {
+    const { rows } = await client.query('SELECT id, name FROM types ORDER BY id');
+    res.json(rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Не удалось получить список типов' });
+  }
+});
+
+// ----------------- Маршрут: все размеры -----------------
+app.get('/sizes', async (req, res) => {
+  try {
+    const { rows } = await client.query('SELECT id, label FROM sizes ORDER BY id');
+    res.json(rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Не удалось получить список размеров' });
+  }
+});
+
+// ----------------- Маршрут: создание нового товара -----------------
+app.post('/createProduct', upload.array('images'), async (req, res) => {
+  const {
+    code,
+    name,
+    description,
+    price,
+    discount_percent,
+    categoryId,
+    typeId,
+    brandId,
+    sizes,
+  } = req.body;
+
+  if (!code || !name || !price || !categoryId || !typeId || !brandId) {
+    return res.status(400).json({ error: 'Обязательные поля отсутствуют' });
+  }
+
+  try {
+    await client.query('BEGIN');
+
+    // 1. Вставка основного товара
+    const insertProductQuery = `
+      INSERT INTO products
+        (code, name, description, price, discount_percent, category_id, type_id, brand_id, created_at, updated_at)
+      VALUES
+        ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
+      RETURNING id
+    `;
+    const productResult = await client.query(insertProductQuery, [
+      code,
+      name,
+      description || '',
+      price,
+      discount_percent || 0,
+      categoryId,
+      typeId,
+      brandId,
+    ]);
+
+    const productId = productResult.rows[0].id;
+
+    // 2. Вставка размеров
+    if (sizes && sizes.length > 0) {
+      const sizeValues = sizes.map(size => [productId, size]);
+      await client.query(
+        `INSERT INTO product_sizes (product_id, size_id) VALUES ${sizeValues.map((_, i) => `($${i*2+1}, $${i*2+2})`).join(', ')}`,
+        sizeValues.flat()
+      );
+    }
+
+    // 3. Вставка изображений
+    if (req.files && req.files.length > 0) {
+      const imageValues = req.files.map(file => [productId, file.path, file.filename]);
+      await client.query(
+        `INSERT INTO product_images (product_id, url, alt_text) VALUES ${imageValues.map((_, i) => `($${i*3+1}, $${i*3+2}, $${i*3+3})`).join(', ')}`,
+        imageValues.flat()
+      );
+    }
+
+    await client.query('COMMIT');
+    res.status(201).json({ message: 'Товар создан', id: productId });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error(err);
+    res.status(500).json({ error: 'Ошибка при создании товара' });
+  }
+});
+
 // ----------------- Запуск сервера -----------------
 app.listen(port, () => {
   console.log(`Server running at http://localhost:${port}`);
